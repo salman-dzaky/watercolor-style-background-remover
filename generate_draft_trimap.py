@@ -11,13 +11,13 @@ FOLDER_OUTPUT = "./output_drafts"
 
 # Pengaturan Morfologi untuk Sure Foreground (Bagian Inti Objek / Putih / 255)
 # Semakin besar iterasi/kernel, semakin mengecil area solid (putih) pada trimap.
-ERODE_KERNEL_SIZE = 9
-ERODE_ITERATIONS = 3
+ERODE_KERNEL_SIZE = 1
+ERODE_ITERATIONS = 1
 
 # Pengaturan Morfologi untuk Sure Background (Bagian Kertas / Hitam / 0)
 # Semakin besar iterasi/kernel, semakin luas area abu-abu (area transisi/batas yang dicari GrabCut).
-DILATE_KERNEL_SIZE = 15
-DILATE_ITERATIONS = 3
+DILATE_KERNEL_SIZE = 31
+DILATE_ITERATIONS = 5
 
 # Pengaturan Denoise awal (Gaussian Blur)
 BLUR_KERNEL_SIZE = 5

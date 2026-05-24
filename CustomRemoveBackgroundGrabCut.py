@@ -151,7 +151,11 @@ def proses_semua_di_folder(folder_input: str, folder_output: str, folder_mask: s
 
     if os.path.exists(folder_input):
         daftar_file = os.listdir(folder_input)
-        file_gambar = [f for f in daftar_file if f.lower().endswith(('.png', '.jpg', '.jpeg'))]
+        # Abaikan file yang berakhiran _mask.png atau _mask.jpg jika mereka diletakkan dalam folder input yang sama
+        file_gambar = [
+            f for f in daftar_file 
+            if f.lower().endswith(('.png', '.jpg', '.jpeg')) and not f.lower().endswith(('_mask.png', '_mask.jpg'))
+        ]
         
         total_file = len(file_gambar)
         if total_file == 0:
@@ -165,15 +169,20 @@ def proses_semua_di_folder(folder_input: str, folder_output: str, folder_mask: s
         for index, filename in enumerate(file_gambar, start=1):
             in_path = os.path.join(folder_input, filename)
             
-            # Asumsi: mask memiliki nama file yang sama persis tapi ada di folder_mask
-            # Bisa jadi ekstensinya beda (contoh .jpg di input tapi masknya .png)
-            # Kita coba cari ekstensi yang cocok atau paksa pakai .png
+            # Asumsi: mask mungkin memiliki akhiran _mask.png / _mask.jpg dari script pembuat draft
+            # atau memiliki nama file persis sama
             nama_file_tanpa_ext = os.path.splitext(filename)[0]
             
+            mask_path_mask_png = os.path.join(folder_mask, f"{nama_file_tanpa_ext}_mask.png")
+            mask_path_mask_jpg = os.path.join(folder_mask, f"{nama_file_tanpa_ext}_mask.jpg")
             mask_path_png = os.path.join(folder_mask, f"{nama_file_tanpa_ext}.png")
             mask_path_jpg = os.path.join(folder_mask, f"{nama_file_tanpa_ext}.jpg")
             
-            if os.path.exists(mask_path_png):
+            if os.path.exists(mask_path_mask_png):
+                mask_path = mask_path_mask_png
+            elif os.path.exists(mask_path_mask_jpg):
+                mask_path = mask_path_mask_jpg
+            elif os.path.exists(mask_path_png):
                 mask_path = mask_path_png
             elif os.path.exists(mask_path_jpg):
                 mask_path = mask_path_jpg
@@ -240,7 +249,7 @@ if __name__ == "__main__":
         print("--- MENJALANKAN MODE 2: FOLDER BATCH ---")
         folder_asal = "./input_folder" 
         folder_tujuan = "./output_folder_klasik"
-        folder_mask = "./mask_folder"
+        folder_mask = "./input_folder"
         
         TOLERANSI_PUTIH = 1.05 
         SOLIDITAS = 1.1 

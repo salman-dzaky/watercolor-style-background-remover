@@ -77,7 +77,15 @@ def hapus_background_hybrid_klasik(
     # STEP 4 — COLOR TO ALPHA EXTRACTION
     # ====================================================
     # Menerapkan white_threshold untuk mengonversi area abu-abu kusam menjadi putih bersih
-    img_np_adj = np.clip(img_np * white_threshold, 0.0, 1.0)
+    # Logika Tahan Banting: 
+    # Jika threshold > 1.0, asumsikan user ingin "menerangkan" (kali silang agar nilainya mendekati/melebihi 1.0 lalu di-clip)
+    # Jika threshold <= 1.0, asumsikan user memakai representasi persentase (dibagi agar nilai yang tadinya < 1.0 bisa mencapai 1.0)
+    if white_threshold > 1.0:
+        img_np_adj = np.clip(img_np * white_threshold, 0.0, 1.0)
+    else:
+        # Menghindari division by zero jika user iseng memasukkan 0.0
+        safe_wt = max(white_threshold, 1e-5)
+        img_np_adj = np.clip(img_np / safe_wt, 0.0, 1.0)
     
     # Formula Matematika Murni Color-to-Alpha: α = 1.0 - minimum(R, G, B)
     alpha_c2a = 1.0 - np.min(img_np_adj, axis=-1)

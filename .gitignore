@@ -9,6 +9,7 @@ __pycache__/
 
 input_folder/*
 output_folder_klasik/*
+output_drafts/*
 
 # C extensions
 *.so

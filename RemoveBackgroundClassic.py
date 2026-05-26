@@ -6,7 +6,8 @@ from PIL import Image
 def hapus_background_hybrid_klasik(
     input_path: str, 
     output_path: str, 
-    mask_path: str,
+    mask_path: str = None,
+    mode: str = 'auto', # SAKLAR METODE: 'auto' atau 'external'
     white_threshold: float = 1.0, 
     alpha_boost: float = 1.0, 
     blur_radius: float = 3.0, 
@@ -15,12 +16,12 @@ def hapus_background_hybrid_klasik(
     """
     Menghapus background putih pada gambar cat air menggunakan kombinasi
     algoritma GrabCut dan matematika (Color-to-Alpha) murni tanpa Deep Learning.
-    Membutuhkan citra mask eksternal (mask_path) yang disediakan oleh pengguna.
+    
+    Parameter 'mode' berfungsi sebagai SAKLAR:
+    - 'auto'     : Menggunakan metode heuristik threshold (legacy) untuk menebak mask.
+    - 'external' : Wajib memberikan mask_path. Akan menggunakan mask eksternal yang di-load.
     """
     
-    if not mask_path or not os.path.exists(mask_path):
-        raise FileNotFoundError(f"STRICT INSTRUCTION ERROR: File mask eksternal diwajibkan dan tidak ditemukan: {mask_path}")
-
     # ====================================================
     # STEP 1 — LOAD & NORMALIZE
     # ====================================================
@@ -35,29 +36,56 @@ def hapus_background_hybrid_klasik(
     img_np = img_rgb.astype(np.float32) / 255.0
 
     # ====================================================
-    # STEP 2 — GRABCUT EXECUTION
+    # STEP 2 — PEMBUATAN MASK (SAKLAR MODE)
     # ====================================================
-    # STRICT INSTRUCTION: DO NOT generate, guess, or threshold the trimap mask dynamically.
-    # Load mask from disk
-    mask_loaded = cv2.imread(mask_path, cv2.IMREAD_GRAYSCALE)
-    if mask_loaded is None:
-        raise ValueError(f"Gagal memuat citra mask dari: {mask_path}")
+    if mode == 'external':
+        # [METODE 1: MASK EKSTERNAL]
+        if not mask_path or not os.path.exists(mask_path):
+            raise FileNotFoundError(f"STRICT INSTRUCTION ERROR: Mode 'external' mewajibkan file mask, namun tidak ditemukan: {mask_path}")
+
+        # Load mask dari disk
+        mask_loaded = cv2.imread(mask_path, cv2.IMREAD_GRAYSCALE)
+        if mask_loaded is None:
+            raise ValueError(f"Gagal memuat citra mask dari: {mask_path}")
+            
+        # Konversi nilai piksel standar (0-255) menjadi konstanta GrabCut (0, 1, 2, 3)
+        if mask_loaded.max() > 3:
+            mask = np.full(mask_loaded.shape, cv2.GC_PR_BGD, dtype=np.uint8)
+            mask[mask_loaded == 0] = cv2.GC_BGD         # Hitam = Background mutlak
+            mask[mask_loaded == 255] = cv2.GC_FGD       # Putih = Foreground mutlak
+        else:
+            mask = mask_loaded.copy()
+
+    elif mode == 'auto':
+        # [METODE 2: MASK OTOMATIS / HEURISTIK]
+        gray = cv2.cvtColor(img_rgb, cv2.COLOR_RGB2GRAY)
         
-    # Konversi nilai piksel standar (0-255) menjadi konstanta GrabCut (0, 1, 2, 3)
-    # Jika mask_loaded sudah menggunakan format GrabCut (nilai <= 3), maka langsung disalin.
-    if mask_loaded.max() > 3:
-        mask = np.full(mask_loaded.shape, cv2.GC_PR_BGD, dtype=np.uint8)
-        mask[mask_loaded == 0] = cv2.GC_BGD         # Hitam = Background mutlak
-        mask[mask_loaded == 255] = cv2.GC_FGD       # Putih = Foreground mutlak
-        # Jika ada warna abu-abu pada mask, akan otomatis menjadi GC_PR_BGD
+        # Inisiasi mask: Secara bawaan, anggap semua area berpotensi background (Probable Background)
+        mask = np.full(gray.shape, cv2.GC_PR_BGD, dtype=np.uint8) 
+        
+        # Heuristik: Area gelap adalah probable foreground (GC_PR_FGD), area sangat gelap adalah mutlak foreground (GC_FGD)
+        mask[gray < 230] = cv2.GC_PR_FGD  
+        mask[gray < 50]  = cv2.GC_FGD      
+        
+        # Mengamankan tepian gambar (margin) dipastikan sebagai background (Kertas putih)
+        margin = 3
+        if gray.shape[0] > margin * 2 and gray.shape[1] > margin * 2:
+            mask[:margin, :] = cv2.GC_BGD
+            mask[-margin:, :] = cv2.GC_BGD
+            mask[:, :margin] = cv2.GC_BGD
+            mask[:, -margin:] = cv2.GC_BGD
+            
     else:
-        mask = mask_loaded.copy()
-        
+        raise ValueError(f"Mode tidak dikenal: '{mode}'. Gunakan 'auto' atau 'external'.")
+
+    # ====================================================
+    # STEP 2.5 — GRABCUT EXECUTION
+    # ====================================================
     # Alokasi model dinamis yang diwajibkan oleh arsitektur GrabCut
     bgdModel = np.zeros((1, 65), np.float64)
     fgdModel = np.zeros((1, 65), np.float64)
     
-    # Eksekusi GrabCut (Optimisasi Graph-Cut): 5 iterasi menggunakan masker eksternal (GC_INIT_WITH_MASK)
+    # Eksekusi GrabCut (Optimisasi Graph-Cut): 5 iterasi menggunakan masker (GC_INIT_WITH_MASK)
     cv2.grabCut(img_rgb, mask, None, bgdModel, fgdModel, 5, cv2.GC_INIT_WITH_MASK)
 
     # ====================================================
@@ -80,14 +108,10 @@ def hapus_background_hybrid_klasik(
     # STEP 4 — COLOR TO ALPHA EXTRACTION
     # ====================================================
     # Menerapkan white_threshold untuk mengonversi area abu-abu kusam menjadi putih bersih
-    # Logika Tahan Banting: 
-    # Jika threshold > 1.0, asumsikan user ingin "menerangkan" (kali silang agar nilainya mendekati/melebihi 1.0 lalu di-clip)
-    # Jika threshold <= 1.0, asumsikan user memakai representasi persentase (dibagi agar nilai yang tadinya < 1.0 bisa mencapai 1.0)
     if white_threshold > 1.0:
         img_np_adj = np.clip(img_np * white_threshold, 0.0, 1.0)
     else:
-        # Menghindari division by zero jika user iseng memasukkan 0.0
-        safe_wt = max(white_threshold, 1e-5)
+        safe_wt = max(white_threshold, 1e-5) # Menghindari division by zero
         img_np_adj = np.clip(img_np / safe_wt, 0.0, 1.0)
     
     # Formula Matematika Murni Color-to-Alpha: α = 1.0 - minimum(R, G, B)
@@ -137,21 +161,28 @@ def hapus_background_hybrid_klasik(
     rgba_image = Image.fromarray(rgba_matrix, 'RGBA')
     rgba_image.save(output_path, "PNG", optimize=True)
 
-def proses_semua_di_folder(folder_input: str, folder_output: str, folder_mask: str, wt: float=1.0, ab: float=1.0, br: float=3.0, nt: float=0.05) -> None:
+def proses_semua_di_folder(
+    folder_input: str, 
+    folder_output: str, 
+    mode: str = 'auto', 
+    folder_mask: str = None, 
+    wt: float=1.0, ab: float=1.0, br: float=3.0, nt: float=0.05
+) -> None:
     """
-    Eksekutor batch: Memproses iterasi untuk seluruha entitas PNG/JPG di folder yang ditentukan.
+    Eksekutor batch yang mendukung kedua mode (auto dan external).
     """
     if not os.path.exists(folder_output):
         os.makedirs(folder_output)
         print(f"Folder '{folder_output}' berhasil dibuat.\n")
 
-    if not os.path.exists(folder_mask):
-        print(f"Error: Folder mask '{folder_mask}' tidak ditemukan!")
+    if mode == 'external' and not os.path.exists(folder_mask):
+        print(f"Error: Mode 'external' diaktifkan tapi Folder mask '{folder_mask}' tidak ditemukan!")
         return
 
     if os.path.exists(folder_input):
         daftar_file = os.listdir(folder_input)
-        # Abaikan file yang berakhiran _mask.png atau _mask.jpg jika mereka diletakkan dalam folder input yang sama
+        
+        # Abaikan file yang merupakan mask jika berada di folder yang sama
         file_gambar = [
             f for f in daftar_file 
             if f.lower().endswith(('.png', '.jpg', '.jpeg')) and not f.lower().endswith(('_mask.png', '_mask.jpg'))
@@ -162,42 +193,41 @@ def proses_semua_di_folder(folder_input: str, folder_output: str, folder_mask: s
             print(f"Tidak ada gambar (JPG/PNG) di dalam folder '{folder_input}'.")
             return
 
-        print(f"Ditemukan {total_file} gambar. Memulai proses batch murni Computer Vision...\n")
+        print(f"Ditemukan {total_file} gambar. Memulai proses batch dengan MODE: [{mode.upper()}]\n")
         print(f"Parameter Terpakai -> WT:{wt} | AB:{ab} | Blur:{br} | Noise Threshold:{nt}")
         print("-" * 50)
 
         for index, filename in enumerate(file_gambar, start=1):
             in_path = os.path.join(folder_input, filename)
-            
-            # Asumsi: mask mungkin memiliki akhiran _mask.png / _mask.jpg dari script pembuat draft
-            # atau memiliki nama file persis sama
             nama_file_tanpa_ext = os.path.splitext(filename)[0]
-            
-            mask_path_mask_png = os.path.join(folder_mask, f"{nama_file_tanpa_ext}_mask.png")
-            mask_path_mask_jpg = os.path.join(folder_mask, f"{nama_file_tanpa_ext}_mask.jpg")
-            mask_path_png = os.path.join(folder_mask, f"{nama_file_tanpa_ext}.png")
-            mask_path_jpg = os.path.join(folder_mask, f"{nama_file_tanpa_ext}.jpg")
-            
-            if os.path.exists(mask_path_mask_png):
-                mask_path = mask_path_mask_png
-            elif os.path.exists(mask_path_mask_jpg):
-                mask_path = mask_path_mask_jpg
-            elif os.path.exists(mask_path_png):
-                mask_path = mask_path_png
-            elif os.path.exists(mask_path_jpg):
-                mask_path = mask_path_jpg
-            else:
-                print(f"[{index}/{total_file}] LEWATI: Mask untuk '{filename}' tidak ditemukan di folder '{folder_mask}'.")
-                continue
-
             out_path = os.path.join(folder_output, f"{nama_file_tanpa_ext}_transparan_CV.png")
             
-            print(f"[{index}/{total_file}] Memproses: {filename} dengan mask {os.path.basename(mask_path)}...")
+            mask_path = None
+            if mode == 'external':
+                # Mencari kandidat file mask di folder mask
+                mask_kandidat = [
+                    os.path.join(folder_mask, f"{nama_file_tanpa_ext}_mask.png"),
+                    os.path.join(folder_mask, f"{nama_file_tanpa_ext}_mask.jpg"),
+                    os.path.join(folder_mask, f"{nama_file_tanpa_ext}.png"),
+                    os.path.join(folder_mask, f"{nama_file_tanpa_ext}.jpg")
+                ]
+                
+                for kandidat in mask_kandidat:
+                    if os.path.exists(kandidat):
+                        mask_path = kandidat
+                        break
+                
+                if mask_path is None:
+                    print(f"[{index}/{total_file}] LEWATI: Mask untuk '{filename}' tidak ditemukan di folder '{folder_mask}'.")
+                    continue
+
+            print(f"[{index}/{total_file}] Memproses: {filename}" + (f" (Mask: {os.path.basename(mask_path)})" if mask_path else ""))
             try:
                 hapus_background_hybrid_klasik(
                     input_path=in_path, 
                     output_path=out_path, 
                     mask_path=mask_path,
+                    mode=mode,
                     white_threshold=wt, 
                     alpha_boost=ab, 
                     blur_radius=br, 
@@ -213,30 +243,40 @@ def proses_semua_di_folder(folder_input: str, folder_output: str, folder_mask: s
         print(f"Error: Folder '{folder_input}' tidak ditemukan!")
 
 # ==========================================
-# PENGATURAN EKSEKUSI (PILIH MODE DI SINI)
+# PENGATURAN EKSEKUSI UTAMA
 # ==========================================
 if __name__ == "__main__":
     
-    # SAKELAR MODE (1=Satu File, 2=Satu Folder, 3=Eksperimen Tuning Parameter)
-    MODE_PILIHAN = 2 
+    # ---------------------------------------------------------
+    # SAKLAR UTAMA (Pilih antara 'auto' atau 'external')
+    # - 'auto'     : Menebak background secara otomatis (logika legacy).
+    # - 'external' : Menggunakan mask dari luar (logika Custom).
+    # ---------------------------------------------------------
+    SAKLAR_METODE = 'auto' 
+    
+    # SAKELAR MODE EKSEKUSI (1=Satu File, 2=Satu Folder)
+    MODE_EKSEKUSI = 2 
 
-    if MODE_PILIHAN == 1:
-        print("--- MENJALANKAN MODE 1: SATU GAMBAR ---")
+    # Parameter Global
+    TOLERANSI_PUTIH = 1.05 
+    SOLIDITAS = 1.2        
+    BLUR_RADIUS = 3.0
+    BATAS_NOISE = 0.05
+
+    print(f"=== PROGRAM DIMULAI (Metode Masking: {SAKLAR_METODE.upper()}) ===")
+
+    if MODE_EKSEKUSI == 1:
+        print("--- MODE 1: SATU GAMBAR ---")
         file_masuk = 'gambar_tes.jpg' 
         file_keluar = 'gambar_tes_bersih.png'
-        file_mask = 'gambar_tes_mask.png'
-        
-        TOLERANSI_PUTIH = 1.05 
-        SOLIDITAS = 1.2        
-        BLUR_RADIUS = 3.0
-        BATAS_NOISE = 0.05
+        file_mask = 'gambar_tes_mask.png' # Hanya dibaca jika SAKLAR_METODE = 'external'
         
         try:
-            print(f"Memproses {file_masuk}...")
             hapus_background_hybrid_klasik(
                 input_path=file_masuk, 
                 output_path=file_keluar, 
-                mask_path=file_mask,
+                mask_path=file_mask if SAKLAR_METODE == 'external' else None,
+                mode=SAKLAR_METODE,
                 white_threshold=TOLERANSI_PUTIH, 
                 alpha_boost=SOLIDITAS, 
                 blur_radius=BLUR_RADIUS,
@@ -244,65 +284,21 @@ if __name__ == "__main__":
             )
             print(f"Selesai! Disimpan sebagai: {file_keluar}")
         except Exception as e:
-            print(e)
+            print(f"Error: {e}")
             
-    elif MODE_PILIHAN == 2:
-        print("--- MENJALANKAN MODE 2: FOLDER BATCH ---")
+    elif MODE_EKSEKUSI == 2:
+        print("--- MODE 2: FOLDER BATCH ---")
         folder_asal = "./input_folder" 
         folder_tujuan = "./output_folder_klasik"
-        # Set folder_mask ke folder tempat Anda menyimpan hasil draft trimap (misal: ./output_drafts)
-        folder_mask = "./mask_folder" 
-        
-        TOLERANSI_PUTIH = 1.05 
-        SOLIDITAS = 1.1 
-        BLUR_RADIUS = 3.0 
-        BATAS_NOISE = 0.04 
+        folder_mask = "./mask_folder" # Hanya dibaca jika SAKLAR_METODE = 'external'
         
         proses_semua_di_folder(
             folder_input=folder_asal, 
             folder_output=folder_tujuan, 
+            mode=SAKLAR_METODE,
             folder_mask=folder_mask,
             wt=TOLERANSI_PUTIH, 
             ab=SOLIDITAS, 
             br=BLUR_RADIUS, 
             nt=BATAS_NOISE
         )
-        
-    elif MODE_PILIHAN == 3:
-        print("--- MENJALANKAN MODE 3: EKSPERIMEN PARAMETER ---")
-        file_masuk = './input_folder/sample.jpg'
-        file_mask = './mask_folder/sample.png'
-        
-        tes_white_threshold = [1.0, 1.1] 
-        tes_alpha_boost = [1.0, 1.3]
-        tes_blur_radius = [2.0, 4.0]
-        BATAS_NOISE = 0.05
-        
-        if not os.path.exists(file_masuk):
-            print(f"Error: Gambar '{file_masuk}' tidak ditemukan untuk dieksperimen!")
-        elif not os.path.exists(file_mask):
-            print(f"Error: Mask '{file_mask}' tidak ditemukan untuk dieksperimen!")
-        else:
-            total_kombinasi = len(tes_white_threshold) * len(tes_alpha_boost) * len(tes_blur_radius)
-            hitung = 1
-            
-            for wt in tes_white_threshold:
-                for ab in tes_alpha_boost:
-                    for br in tes_blur_radius:
-                        nama_output = f"eksperimen_CV_WT{wt}_AB{ab}_BR{br}.png"
-                        print(f"[{hitung}/{total_kombinasi}] Uji WT={wt}, AB={ab}, BR={br} -> {nama_output}")
-                        try:
-                            hapus_background_hybrid_klasik(
-                                input_path=file_masuk, 
-                                output_path=nama_output, 
-                                mask_path=file_mask,
-                                white_threshold=wt, 
-                                alpha_boost=ab, 
-                                blur_radius=br, 
-                                noise_threshold=BATAS_NOISE
-                            )
-                        except Exception as e:
-                            print(f"Error saat komputasi: {e}")
-                        hitung += 1
-                        
-            print("\nEksperimen Selesai! Pilih output terbaik Anda.")

@@ -56,13 +56,7 @@ def buat_draft_trimap(
     # 3. OTSU'S THRESHOLDING
     # Menggunakan THRESH_BINARY_INV karena kertas berwarna cerah (putih) dan cat air lebih gelap.
     # Hasil: Cat air menjadi putih (255), kertas menjadi hitam (0).
-    # _, otsu_mask = cv2.threshold(blurred, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
-    # Ubah BGR ke HSV
-    hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
-    # Ambil channel S (Saturation)
-    saturation = hsv[:, :, 1]
-    # Thresholding: Semua yang saturasinya di atas 130 (ada warnanya), jadikan putih. Sisanya (kertas pucat), hitam.
-    _, otsu_mask = cv2.threshold(saturation, 130, 255, cv2.THRESH_BINARY)
+    _, otsu_mask = cv2.threshold(blurred, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
     
     # 4. MORPHOLOGICAL OPERATIONS (The Core Logic)
     # Siapkan kernel (matriks berisikan angka 1) untuk erosi dan dilasi

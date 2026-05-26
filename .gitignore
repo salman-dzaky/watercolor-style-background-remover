@@ -10,6 +10,7 @@ __pycache__/
 input_folder/*
 output_folder_klasik/*
 output_drafts/*
+mask_folder/*
 
 # C extensions
 *.so

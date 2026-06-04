@@ -12,6 +12,8 @@ output_folder_klasik/*
 output_drafts/*
 mask_folder/*
 
+*.docx
+
 # C extensions
 *.so
 

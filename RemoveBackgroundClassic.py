@@ -198,6 +198,10 @@ def proses_semua_di_folder(
         print("-" * 50)
 
         for index, filename in enumerate(file_gambar, start=1):
+            # Mengabaikan file tersembunyi sistem atau file gitkeep secara eksplisit
+            if filename.startswith('.') or filename == '.gitkeep':
+                continue
+
             in_path = os.path.join(folder_input, filename)
             nama_file_tanpa_ext = os.path.splitext(filename)[0]
             out_path = os.path.join(folder_output, f"{nama_file_tanpa_ext}_transparan_CV.png")

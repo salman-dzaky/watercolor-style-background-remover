@@ -9,7 +9,7 @@ Untuk melakukannya dengan virtual environment, lakukan langkah-langkah berikut.
 
 1. Jalankan `python -m venv .venv`
 
-2. Jalankan `venv/Scripts/activate`
+2. Jalankan `.venv/Scripts/activate`
 
 3. Install semua library dengan menjalankan `pip install -r requirements.txt`
 
